@@ -14,5 +14,7 @@
     特别注意，如果只是获得返回的status，比如成功或失败，或者代码中存在用户输入的参数通过POST请求处理后直接返回给LLM的逻辑，则 = LOW。
     请根据代码的含义自行判断是否返回的是状态，正常来说，写入（write and so on），查询(query, search and so on)，创建(create, generate and so on)等操作可能都会返回状态而非实际的内容。则都 = LOW，只要函数链中存在类似的函数，则需要反复确认，一般为 = LOW。
 
+    如果存在发现用户可以直接上传代码给服务端执行的情况，则返回 = HIGH。
+
     ***仅***返回严格 JSON：
     {{"risk": "HIGH"|"LOW"｜"No Risk", "explanation": "一句话原因", "code": "风险相关的代码抽象片段"}}
