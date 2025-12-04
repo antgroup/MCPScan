@@ -1,0 +1,145 @@
+rules:
+  # 高风险：函数中包含文件读取和外部网站访问
+  - id: detect-high-risk-functions-java
+    message: |
+      高风险函数 '$FUNC_NAME' 包含敏感操作（文件或外部网络访问）
+      - 风险级别: 高风险 - 可能直接将外部内容返回给模型
+    severity: ERROR
+    languages: [java]
+    mode: taint
+
+    # taint 源：文件读取 / 外部 HTTP 访问
+    pattern-sources:
+      # -------- 文件系统读取相关 --------
+      - pattern: java.nio.file.Files.readAllBytes($PATH)
+      - pattern: java.nio.file.Files.readString($PATH, ...)
+      - pattern: java.nio.file.Files.lines($PATH, ...)
+      - pattern: java.nio.file.Files.newBufferedReader($PATH, ...)
+
+      - pattern: new java.io.FileInputStream($FILE)
+      - pattern: new java.io.FileReader($FILE)
+      - pattern: new java.io.BufferedReader($READER)
+
+      - pattern: $SCANNER = new java.util.Scanner($SRC, ...)
+      - pattern: $SCANNER.nextLine()
+      - pattern: $SCANNER.next()
+
+      # -------- URL / HTTP 读取相关 --------
+      # 经典 URL / HttpURLConnection
+      - pattern: $URL.openStream()
+      - pattern: (java.net.HttpURLConnection) $URL.openConnection()
+      - pattern: $CONN.getInputStream()
+
+      # java.net.http.HttpClient
+      - pattern: $CLIENT.send($REQUEST, ...)
+
+      # Spring RestTemplate
+      - pattern: $CLIENT.getForObject($URL, ...)
+      - pattern: $CLIENT.getForEntity($URL, ...)
+
+      # OkHttp
+      - pattern: $CLIENT.newCall($REQUEST).execute()
+
+      # 其他自定义 http client 的 GET/请求方法
+      - pattern: $CLIENT.get($URL, ...)
+      - pattern: $CLIENT.get($REQUEST, ...)
+      - pattern: $CLIENT.execute($REQUEST, ...)
+
+    # taint sink：被函数返回 / 赋值（认为可能最终传给模型）
+    pattern-sinks:
+      - pattern: return $SINK
+      - pattern: $VAR = $SINK
+      - pattern: final $TYPE $VAR = $SINK
+      - pattern: $TYPE $VAR = $SINK
+
+    # 限定必须在函数内部（普通方法 / 静态方法 / 类方法 / lambda）
+    pattern-inside:
+      - pattern-either:
+          # 普通方法
+          - pattern: |
+              class $CLASS {
+                ...
+                $RET $FUNC_NAME(...) {
+                  ...
+                }
+                ...
+              }
+          # 带 throws 的方法
+          - pattern: |
+              class $CLASS {
+                ...
+                $RET $FUNC_NAME(...) throws $EX {
+                  ...
+                }
+                ...
+              }
+          # 静态方法
+          - pattern: |
+              class $CLASS {
+                ...
+                static $RET $FUNC_NAME(...) {
+                  ...
+                }
+                ...
+              }
+          # 顶层方法（某些 Java 方言或工具生成代码）
+          - pattern: |
+              $RET $FUNC_NAME(...) {
+                ...
+              }
+          # lambda 形式（函数式工具类中常见）
+          - pattern: |
+              $FUNC_NAME = ($PARAMS) -> {
+                ...
+              }
+
+  # 中风险：系统命令执行（Runtime.exec / ProcessBuilder / eval）
+  - id: detect-command-execution-java
+    message: |
+      中风险：检测到系统命令执行
+      - 命令调用: $CMD
+      - 风险级别: 中风险 - 系统命令执行
+    severity: WARNING
+    languages: [java]
+    pattern-either:
+      # Runtime.exec
+      - pattern: Runtime.getRuntime().exec($CMD, ...)
+      - pattern: Runtime.getRuntime().exec($CMD)
+
+      # ProcessBuilder 直接启动
+      - pattern: new ProcessBuilder($CMD, ...).start()
+      - pattern: new ProcessBuilder($CMD).start()
+
+      # 先创建再调用 start（简单版本）
+      - pattern: |
+          $PB = new ProcessBuilder($CMD, ...);
+          ...
+          $PB.start()
+
+      # 脚本引擎 eval（可能执行动态代码）
+      - pattern: $ENGINE.eval($CODE)
+
+  # 提取 description 文本（用于抽取描述信息）
+  - id: extract-descriptions-java
+    message: "Found description: $DESC"
+    languages: [java]
+    severity: INFO
+    pattern-either:
+      # 字段赋值
+      - pattern: description = $DESC
+      - pattern: $ANY.description = $DESC
+
+      # setter / builder 风格
+      - pattern: $ANY.setDescription($DESC)
+      - pattern: $ANY.withDescription($DESC)
+      - pattern: $ANY.description($DESC)
+
+  # 硬编码敏感信息（Java 版本）
+  - id: detect-hardcoded-secrets-java
+    languages: [java]
+    severity: ERROR
+    message: |
+      硬编码的敏感信息被检测到：请使用环境变量或安全的配置管理方案来替换此处的明文字符串。
+    # PCRE (?i) 不区分大小写；[_-]? 可选下划线或中划线；\s* 任意空白；["'][^"']+["'] 支持单/双引号
+    pattern-regex: >-
+      (?i)\b(api[_-]?key|secret|token|password)\b\s*=\s*["'][^"']+["']

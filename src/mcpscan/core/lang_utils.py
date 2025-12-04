@@ -3,16 +3,29 @@ from pathlib import Path
 
 JS_EXTS = {".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"}
 PY_EXTS = {".py"}
+JAVA_EXTS = {".java"}
 
 
 def detect_primary_language(root: Path) -> str:
+    js_cnt = py_cnt = java_cnt = 0
 
-    js_cnt = py_cnt = 0
     for f in root.rglob("*"):
         if not f.is_file():
             continue
-        if f.suffix in JS_EXTS:
+
+        suffix = f.suffix
+
+        if suffix in JS_EXTS:
             js_cnt += 1
-        elif f.suffix in PY_EXTS:
+        elif suffix in PY_EXTS:
             py_cnt += 1
-    return "js" if js_cnt >= py_cnt else "py"
+        elif suffix in JAVA_EXTS:
+            java_cnt += 1
+
+    # 比较数量
+    if java_cnt >= js_cnt and java_cnt >= py_cnt:
+        return "java"
+    elif js_cnt >= py_cnt:
+        return "js"
+    else:
+        return "py"
