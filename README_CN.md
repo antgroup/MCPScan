@@ -154,7 +154,7 @@ mcpscan scan https://github.com/smithery-ai/mcp-fetch.git
 ## 👨‍💻 作者团队
 
 本项目由以下人员开发与维护：
-沙泽阳，陈昌骅，熊润，崔世文，孟昌华，王维强
+沙泽阳，李红程，陈昌骅，熊润，崔世文，孟昌华，王维强
 
 ---
 
@@ -172,7 +172,7 @@ mcpscan scan https://github.com/smithery-ai/mcp-fetch.git
 ```bibtex
 @misc{sha2025mcpscan,
   title={MCPSCAN},
-  author={Zeyang Sha and Changhua Chen and Run Xiong and Shiwen Cui and Changhua Meng and Weiqiang Wang},
+  author={Zeyang Sha and Hongcheng Li Changhua Chen and Run Xiong and Shiwen Cui and Changhua Meng and Weiqiang Wang},
   year={2025},
   url={https://github.com/antgroup/Trustworthy_LM/mcp-scan}
 }
