@@ -133,3 +133,189 @@ rules:
  
     pattern-regex: >-
       (?i)\b(api[_-]?key|secret|token|password)\b\s*=\s*["'][^"']+["']
+
+  # ---------------------------------------------------------------------------
+  # Injection-direction taint rules (untrusted MCP tool input -> dangerous sink).
+  # Complements the exfiltration-direction detection above.
+  # Injection-direction taint rules for MCP servers (Python).
+  # Complements MCPScan's existing exfiltration-direction taint rule by covering
+  # the UNTRUSTED-INPUT -> DANGEROUS-SINK direction (path / command / SSRF).
+  # Written in MCPScan's semgrep rule style (mode: taint).
+  #
+  # SCOPE & KNOWN LIMITS (documented honestly so a reader knows the FN surface):
+  #   * Taint sources are the parameters of @*.tool and @*.call_tool handlers
+  #     (the attacker-reachable tool entry points). This keeps precision high but
+  #     is NARROW on recall:
+  #       - undecorated registration is NOT covered (no decorator to anchor the
+  #         source): imperative `mcp.add_tool(fn)`, class-based
+  #         `Tool(name=.., handler=fn)`, and the low-level pattern where a
+  #         `types.Tool(...)` definition is routed by a central `call_tool`
+  #         dispatcher to a plain `handle_*(arguments)` / `cmd(params)` function.
+  #         On a 7-repo public cross-check these undecorated handlers were the
+  #         main recall gap vs an independent interprocedural scanner.
+  #       - cross-function taint (handler delegates to a same-file helper) is NOT
+  #         followed: these rules are intraprocedural.
+  #   * `os.path.basename` is treated as a traversal sanitizer. Caveat: it is
+  #     POSIX-separator aware (a `..\\` payload is not stripped on POSIX) and only
+  #     cleans the component it wraps; `secure_filename` is stronger.
+  # ---------------------------------------------------------------------------
+  - id: mcp-tool-input-path-traversal
+    message: >
+      MCP tool input flows into a filesystem path without sanitization,
+      enabling path traversal (user-controlled parameter reaches a file operation).
+    severity: ERROR
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.tool(...)
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.tool
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.call_tool(...)
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.call_tool
+              def $F(..., $SRC, ...):
+                ...
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: secure_filename(...)
+    pattern-sinks:
+      # path passed as an argument
+      - patterns:
+          - pattern-either:
+              - pattern: open($PATH, ...)
+              - pattern: io.open($PATH, ...)
+              - pattern: aiofiles.open($PATH, ...)
+              - pattern: os.open($PATH, ...)
+              - pattern: os.remove($PATH)
+              - pattern: os.rename($PATH, ...)
+          - focus-metavariable: $PATH
+      # path as the receiver of a pathlib-style read/write/open (taint-gated on
+      # the receiver, so a tainted Path variable built earlier is still caught)
+      - patterns:
+          - pattern-either:
+              - pattern: $P.open(...)
+              - pattern: $P.read_text(...)
+              - pattern: $P.read_bytes(...)
+              - pattern: $P.write_text(...)
+              - pattern: $P.write_bytes(...)
+          - focus-metavariable: $P
+
+  - id: mcp-tool-input-command-injection
+    message: >
+      MCP tool input flows into a shell/command execution without sanitization
+      (command injection). Fires only when a tool parameter is tainted into
+      os.system/os.popen/eval/exec or a shell=True subprocess call -- not on
+      every subprocess use.
+    severity: ERROR
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.tool(...)
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.tool
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.call_tool(...)
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.call_tool
+              def $F(..., $SRC, ...):
+                ...
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: os.system($CMD)
+              - pattern: os.popen($CMD, ...)
+              - pattern: eval($CMD)
+              - pattern: exec($CMD)
+              - pattern: subprocess.run($CMD, ..., shell=True, ...)
+              - pattern: subprocess.call($CMD, ..., shell=True, ...)
+              - pattern: subprocess.Popen($CMD, ..., shell=True, ...)
+              - pattern: subprocess.check_output($CMD, ..., shell=True, ...)
+          - focus-metavariable: $CMD
+
+  - id: mcp-tool-input-ssrf
+    message: >
+      MCP tool input flows into an outbound HTTP request URL without validation
+      (SSRF). Only NAMED HTTP client calls are sinks, to avoid false positives
+      from matching every .get()/.post().
+    severity: ERROR
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.tool(...)
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.tool
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.call_tool(...)
+              def $F(..., $SRC, ...):
+                ...
+      - patterns:
+          - pattern: $SRC
+          - pattern-inside: |
+              @$D.call_tool
+              def $F(..., $SRC, ...):
+                ...
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: requests.get($URL, ...)
+              - pattern: requests.post($URL, ...)
+              - pattern: requests.put($URL, ...)
+              - pattern: requests.delete($URL, ...)
+              - pattern: requests.patch($URL, ...)
+              - pattern: requests.head($URL, ...)
+              - pattern: httpx.get($URL, ...)
+              - pattern: httpx.post($URL, ...)
+              - pattern: urllib.request.urlopen($URL, ...)
+              - pattern: aiohttp.ClientSession(...).get($URL, ...)
+              - pattern: aiohttp.ClientSession(...).post($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern-either:
+              - pattern: requests.get(url=$URL, ...)
+              - pattern: httpx.get(url=$URL, ...)
+              - pattern: requests.request($M, url=$URL, ...)
+          - focus-metavariable: $URL
